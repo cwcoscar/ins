@@ -5,7 +5,7 @@
 #include <geometry_msgs/TwistWithCovarianceStamped.h>
 #include <ublox_msgs/NavATT.h>
 #include <sensor_msgs/NavSatFix.h>
-#include <ins/InsATT.h>
+#include <ins/InsFIX.h>
 
 #define _USE_MATH_DEFINES
 #include <cmath>
@@ -73,14 +73,12 @@ namespace INS
     {
         private:
             
-            imu_calibration imu_correction;
-            state state_vector;
-            mechanization mech_variables;
-            ros::Publisher pub_ins_fix;
-            ros::Publisher pub_ins_vel;
-            ros::Publisher pub_ins_att;
+            imu_calibration imu_correction_;
+            state state_vector_;
+            mechanization mech_variables_;
+            ros::Publisher pub_ins_fix_;
         public:
-            Ins_mechanization(ros::Publisher pub_fix, ros::Publisher pub_vel, ros::Publisher pub_att);
+            Ins_mechanization(ros::Publisher pub_fix);
             // imu_calibration imu_correction;
             double gravity(double lat_rad);
             double earth_radius_along_meridian(double lat_rad);

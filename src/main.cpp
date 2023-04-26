@@ -7,11 +7,9 @@ int main(int argc, char **argv) {
     ros::NodeHandle nh("~");
 
     // Publishers of ins solution
-    ros::Publisher pub_ins_fix = n.advertise<sensor_msgs::NavSatFix>("/ins/fix", 1);
-    ros::Publisher pub_ins_vel = n.advertise<geometry_msgs::TwistWithCovarianceStamped>("/ins/vel", 1);
-    ros::Publisher pub_ins_att = n.advertise<ins::InsATT>("/ins/att", 1);
+    ros::Publisher pub_ins_fix = n.advertise<ins::InsFIX>("/ins/fix", 1);
 
-    INS::Ins_mechanization ublox_ins(pub_ins_fix, pub_ins_vel, pub_ins_att);
+    INS::Ins_mechanization ublox_ins(pub_ins_fix);
 
     // Subscribers of GNSS data
     ros::Subscriber sub_att = n.subscribe("/ublox_f9k/navatt", 1, &INS::Ins_mechanization::GNSSattcallback, &ublox_ins);
