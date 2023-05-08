@@ -1,7 +1,7 @@
 <!---->
 <launch>
   <arg name="gnss_fix_type" value="1"/> <!-- 0:ublox , 1:novatel-->
-  <arg name="fix_mode" value="0"/> <!-- 0:test mode , 1:fusion mode-->
+  <arg name="fix_mode" value="1"/> <!-- 0:test mode , 1:fusion mode-->
   
   <node name="ins" pkg="ins" type="main" output="screen">
     <param name="gnss_fix_type" value="$(arg gnss_fix_type)" type="int"/>

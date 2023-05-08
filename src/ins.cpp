@@ -121,50 +121,36 @@ void Ins_mechanization::r_dot_l_update(mechanization& variables, state& vec){
 }
 
 void Ins_mechanization::GNSSfixcallback(const sensor_msgs::NavSatFix& msg){
-    Eigen::Vector3d pos(msg.latitude, msg.longitude, msg.altitude);
-    state_vector_.r_l = pos;
+    if(ins_config_.mode == 0 || fix_flag == false){
+        Eigen::Vector3d pos(msg.latitude, msg.longitude, msg.altitude);
+        state_vector_.r_l = pos;
+    }
+    else if(ins_config_.mode == 1){
+        //Don't update
+    }
     fix_flag = true;
 }
 
 void Ins_mechanization::GNSSvelcallback(const geometry_msgs::TwistWithCovarianceStamped& msg){ // /ublox_f9k/fix_velocity:ENU
-    Eigen::Vector3d vel_l(msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z);
-    state_vector_.v_l = vel_l;
+    if(ins_config_.mode == 0 || vel_flag == false){
+        Eigen::Vector3d vel_l(msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z);
+        state_vector_.v_l = vel_l;
+    }
+    else if(ins_config_.mode == 1){
+        //Don't update
+    }
     vel_flag = true;
 }
             
 void Ins_mechanization::GNSSattcallback(const ublox_msgs::NavATT& msg){ 
-    Eigen::Vector3d att(msg.roll/100000, msg.pitch/100000, msg.heading/100000);
-    // NED -> ENU
-    att(2) = 360 - att(2);
-    double tmp = att(1);
-    att(1) = att(0);
-    att(0) = tmp;
-
-    // 0 ~ 2PI -> -PI ~ PI
-    for (int i = 0; i < 3; i++){
-        if (att(i) > 180 && att(i) < 360){
-            att(i) = att(i) - 360;
-        }
-    }
-    att = att*DEG_TO_RAD; 
-    // std::cout << "att" << std::endl << att << std::endl;
-    state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
-    state_vector_.att_l = att;
-    att_flag = true;
-}
-
-void Ins_mechanization::Novatelfixcallback(const novatel_gps_msgs::Inspva& msg){
-    fix_flag = vel_flag = att_flag = true;
-    if (ins_config_.novatel_count >= 100){
-        ins_config_.novatel_count = 0;
-        Eigen::Vector3d pos(msg.latitude, msg.longitude, msg.height);
-        Eigen::Vector3d vel_l(msg.east_velocity, msg.north_velocity, msg.up_velocity);
-        Eigen::Vector3d att(msg.roll, msg.pitch, msg.azimuth);
+    if(ins_config_.mode == 0 || att_flag == false){
+        Eigen::Vector3d att(msg.roll/100000, msg.pitch/100000, msg.heading/100000);
         // NED -> ENU
         att(2) = 360 - att(2);
         double tmp = att(1);
         att(1) = att(0);
         att(0) = tmp;
+
         // 0 ~ 2PI -> -PI ~ PI
         for (int i = 0; i < 3; i++){
             if (att(i) > 180 && att(i) < 360){
@@ -172,14 +158,48 @@ void Ins_mechanization::Novatelfixcallback(const novatel_gps_msgs::Inspva& msg){
             }
         }
         att = att*DEG_TO_RAD; 
-
-        state_vector_.r_l = pos;
-        state_vector_.v_l = vel_l;
+        // std::cout << "att" << std::endl << att << std::endl;
         state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
         state_vector_.att_l = att;
-        // std::cout << "\033[33m" << "att" << std::endl << att << "\033[0m" << std::endl;
     }
-    else ins_config_.novatel_count++;
+    else if(ins_config_.mode == 1){
+        //Don't update
+    }
+    att_flag = true;
+}
+
+void Ins_mechanization::Novatelfixcallback(const novatel_gps_msgs::Inspva& msg){
+    if(ins_config_.mode == 0 || fix_flag == false){
+        if (ins_config_.novatel_count >= 100){
+            ins_config_.novatel_count = 0;
+            Eigen::Vector3d pos(msg.latitude, msg.longitude, msg.height);
+            Eigen::Vector3d vel_l(msg.east_velocity, msg.north_velocity, msg.up_velocity);
+            Eigen::Vector3d att(msg.roll, msg.pitch, msg.azimuth);
+            // NED -> ENU
+            att(2) = 360 - att(2);
+            double tmp = att(1);
+            att(1) = att(0);
+            att(0) = tmp;
+            // 0 ~ 2PI -> -PI ~ PI
+            for (int i = 0; i < 3; i++){
+                if (att(i) > 180 && att(i) < 360){
+                    att(i) = att(i) - 360;
+                }
+            }
+            att = att*DEG_TO_RAD; 
+
+            state_vector_.r_l = pos;
+            state_vector_.v_l = vel_l;
+            state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
+            state_vector_.att_l = att;
+            // std::cout << "\033[33m" << "att" << std::endl << att << "\033[0m" << std::endl;
+        }
+        else ins_config_.novatel_count++;
+    }
+    else if(ins_config_.mode == 1){
+        //Don't update
+    }
+    fix_flag = vel_flag = att_flag = true;
 }
 
 void Ins_mechanization::fusionfixcallback(const uwb_ins_eskf_msgs::fusionFIX& msg){
