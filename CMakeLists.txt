@@ -15,10 +15,11 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   geometry_msgs
   ublox_msgs
+  uwb_ins_eskf_msgs
 )
 
 ## Generate messages in the 'msg' folder
-add_message_files(DIRECTORY msg)
+# add_message_files(DIRECTORY msg)
 
 ## Generate added messages and services with any dependencies listed here
 generate_messages(
@@ -33,6 +34,7 @@ catkin_package(
  std_msgs 
  message_runtime
  sensor_msgs
+ novatel_gps_msgs
 )
 
 ###########
@@ -61,4 +63,3 @@ install(TARGETS
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
   )
-

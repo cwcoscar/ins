@@ -5,7 +5,9 @@
 #include <geometry_msgs/TwistWithCovarianceStamped.h>
 #include <ublox_msgs/NavATT.h>
 #include <sensor_msgs/NavSatFix.h>
-#include <ins/InsFIX.h>
+#include <novatel_gps_msgs/Inspva.h>
+#include <uwb_ins_eskf_msgs/fusionFIX.h>
+#include <uwb_ins_eskf_msgs/InsFIX.h>
 
 #define _USE_MATH_DEFINES
 #include <cmath>
@@ -41,6 +43,12 @@
 
 namespace INS
 {
+    typedef struct INS_config{
+        int mode;
+        int fix_type;
+        int novatel_count = 100;
+    }config;
+
     typedef struct imu_calibration_parameter{
         Eigen::VectorXd acc_bias;
         Eigen::VectorXd acc_scale;
@@ -72,13 +80,13 @@ namespace INS
     class Ins_mechanization
     {
         private:
-            
             imu_calibration imu_correction_;
             state state_vector_;
             mechanization mech_variables_;
             ros::Publisher pub_ins_fix_;
+            config ins_config_;
         public:
-            Ins_mechanization(ros::Publisher pub_fix);
+            Ins_mechanization(ros::Publisher pub_fix, config ins_config);
             // imu_calibration imu_correction;
             double gravity(double lat_rad);
             double earth_radius_along_meridian(double lat_rad);
@@ -97,6 +105,8 @@ namespace INS
             void GNSSfixcallback(const sensor_msgs::NavSatFix& msg);
             void GNSSvelcallback(const geometry_msgs::TwistWithCovarianceStamped& msg);
             void GNSSattcallback(const ublox_msgs::NavATT& msg);
+            void Novatelfixcallback(const novatel_gps_msgs::Inspva& msg);
+            void fusionfixcallback(const uwb_ins_eskf_msgs::fusionFIX& msg);
             void Imucallback(const sensor_msgs::Imu& msg);
             void Imu_data_calibration(Eigen::Vector3d acc_raw, Eigen::Vector3d gyro_raw);
             void Initialize_state();

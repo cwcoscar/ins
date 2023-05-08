@@ -13,8 +13,8 @@ Eigen::Vector3d g_b(0.00710659149934062, 0.00211909908717263, -0.000059295109968
 Eigen::Vector3d g_s(-2.36707629594559, -0.490347919324706, -0.686283178454847);
 Eigen::Vector3d nckuee(NCKUEE_LATITUDE, NCKUEE_LONGITUDE, NCKUEE_HEIGHT);
 
-Ins_mechanization::Ins_mechanization(ros::Publisher pub_fix) 
-: pub_ins_fix_(pub_fix){
+Ins_mechanization::Ins_mechanization(ros::Publisher pub_fix, config ins_config) 
+: pub_ins_fix_(pub_fix), ins_config_(ins_config){
     imu_correction_.acc_bias = a_b;
     imu_correction_.acc_scale = a_s;
     imu_correction_.gyro_bias = g_b;
@@ -52,24 +52,24 @@ Eigen::VectorXd Ins_mechanization::w_ie_l_update(double lat_rad){
 }
 
 Eigen::MatrixXd Ins_mechanization::omega_el_l_update(state& vector){
-    return coordinate_mat_transformation::Skew_symmetric_transform(w_el_l_update(vector.v_l, vector.r_l(0), vector.r_l(2)), 3);
+    return coordinate_mat_transformation::Skew_symmetric_transform(w_el_l_update(vector.v_l, vector.r_l(0)*DEG_TO_RAD, vector.r_l(2)), 3);
 }
 
 Eigen::MatrixXd Ins_mechanization::omega_ie_l_update(state& vector){
-    return coordinate_mat_transformation::Skew_symmetric_transform(w_ie_l_update(vector.r_l(0)), 3);
+    return coordinate_mat_transformation::Skew_symmetric_transform(w_ie_l_update(vector.r_l(0)*DEG_TO_RAD), 3);
 }
 
 Eigen::MatrixXd Ins_mechanization::omega_il_b_update(state& vector, int dim){ //dim = 3 or 4
     Eigen::VectorXd w_il_b(3);
-    w_il_b = w_el_l_update(vector.v_l,vector.r_l(0),vector.r_l(2)) + w_ie_l_update(vector.r_l(0));
+    w_il_b = w_el_l_update(vector.v_l,vector.r_l(0)*DEG_TO_RAD,vector.r_l(2)) + w_ie_l_update(vector.r_l(0)*DEG_TO_RAD);
     return coordinate_mat_transformation::Skew_symmetric_transform(vector.R_b_l.transpose()*w_il_b, dim);
 }
 
 Eigen::MatrixXd Ins_mechanization::D_inverse_update(state& vector){
     Eigen::MatrixXd D_inverse(3, 3);
-    D_inverse << 0,                                   1/(earth_radius_along_meridian(vector.r_l(0))+vector.r_l(2)),       0,
-                1/((earth_radius_along_prime_vertical(vector.r_l(0))+vector.r_l(2))*cos(vector.r_l(0)*DEG_TO_RAD)), 0,    0,
-                0,                                    0,                                                                  1;
+    D_inverse << 0,                                   1/(earth_radius_along_meridian(vector.r_l(0)*DEG_TO_RAD)+vector.r_l(2)),       0,
+                1/((earth_radius_along_prime_vertical(vector.r_l(0)*DEG_TO_RAD)+vector.r_l(2))*cos(vector.r_l(0)*DEG_TO_RAD)), 0,    0,
+                0,                                    0,                                                                             1;
     return D_inverse;
 }
 
@@ -86,7 +86,7 @@ void Ins_mechanization::R_dot_l_b_update(mechanization& variables, state& vec){
 void Ins_mechanization::Q_dot_update(mechanization& variables, state& vec){
     Eigen::MatrixXd omega_il_b;
     omega_il_b = omega_il_b_update(vec,4);
-    // std::cout << "w_il_b" << std::endl <<  w_el_l_update(vec.v_l,vec.r_l(0),vec.r_l(2)) + w_ie_l_update(vec.r_l(0)) << std::endl;
+    // std::cout << "w_il_b" << std::endl <<  w_el_l_update(vec.v_l,vec.r_l(0),vec.r_l(2)) + w_ie_l_update(vec.r_l(0)*DEG_TO_RAD) << std::endl;
     Eigen::MatrixXd omega_ib_b;
     omega_ib_b = coordinate_mat_transformation::Skew_symmetric_transform(variables.w_ib_b, 4);
     // std::cout << "w_ib_b" << std::endl << variables.w_ib_b << std::endl;
@@ -102,7 +102,7 @@ void Ins_mechanization::v_dot_l_update(mechanization& variables, state& vec){
     Eigen::MatrixXd omega_el_l;
     omega_el_l = omega_el_l_update(vec);
     
-    Eigen::Vector3d g_l(0, 0, -gravity(vec.r_l(0)));
+    Eigen::Vector3d g_l(0, 0, -gravity(vec.r_l(0)*DEG_TO_RAD));
     variables.v_dot_l_past = variables.v_dot_l_now;
     variables.v_dot_l_now = vec.R_b_l * variables.f_b - (2*omega_ie_l + omega_el_l)*vec.v_l + vec.R_b_l * g_l;
 
@@ -126,23 +126,19 @@ void Ins_mechanization::GNSSfixcallback(const sensor_msgs::NavSatFix& msg){
     fix_flag = true;
 }
 
-void Ins_mechanization::GNSSvelcallback(const geometry_msgs::TwistWithCovarianceStamped& msg){
-    if (att_flag == true){
-        Eigen::Vector3d vel_l(msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z);
-        state_vector_.v_l = vel_l;
-        vel_flag = true;
-    }
-    else{
-        std::cout << "\033[33m" << "Waiting for initial attitude !" << "\033[0m" << std::endl;
-    }
+void Ins_mechanization::GNSSvelcallback(const geometry_msgs::TwistWithCovarianceStamped& msg){ // /ublox_f9k/fix_velocity:ENU
+    Eigen::Vector3d vel_l(msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z);
+    state_vector_.v_l = vel_l;
+    vel_flag = true;
 }
             
 void Ins_mechanization::GNSSattcallback(const ublox_msgs::NavATT& msg){ 
     Eigen::Vector3d att(msg.roll/100000, msg.pitch/100000, msg.heading/100000);
     // NED -> ENU
     att(2) = 360 - att(2);
+    double tmp = att(1);
     att(1) = att(0);
-    att(0) = att(1);
+    att(0) = tmp;
 
     // 0 ~ 2PI -> -PI ~ PI
     for (int i = 0; i < 3; i++){
@@ -157,17 +153,71 @@ void Ins_mechanization::GNSSattcallback(const ublox_msgs::NavATT& msg){
     att_flag = true;
 }
 
+void Ins_mechanization::Novatelfixcallback(const novatel_gps_msgs::Inspva& msg){
+    fix_flag = vel_flag = att_flag = true;
+    if (ins_config_.novatel_count >= 100){
+        ins_config_.novatel_count = 0;
+        Eigen::Vector3d pos(msg.latitude, msg.longitude, msg.height);
+        Eigen::Vector3d vel_l(msg.east_velocity, msg.north_velocity, msg.up_velocity);
+        Eigen::Vector3d att(msg.roll, msg.pitch, msg.azimuth);
+        // NED -> ENU
+        att(2) = 360 - att(2);
+        double tmp = att(1);
+        att(1) = att(0);
+        att(0) = tmp;
+        // 0 ~ 2PI -> -PI ~ PI
+        for (int i = 0; i < 3; i++){
+            if (att(i) > 180 && att(i) < 360){
+                att(i) = att(i) - 360;
+            }
+        }
+        att = att*DEG_TO_RAD; 
+
+        state_vector_.r_l = pos;
+        state_vector_.v_l = vel_l;
+        state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
+        state_vector_.att_l = att;
+        // std::cout << "\033[33m" << "att" << std::endl << att << "\033[0m" << std::endl;
+    }
+    else ins_config_.novatel_count++;
+}
+
+void Ins_mechanization::fusionfixcallback(const uwb_ins_eskf_msgs::fusionFIX& msg){
+    fix_flag = vel_flag = att_flag = true;
+
+    Eigen::Vector3d pos(msg.latitude, msg.longitude, msg.altitude);
+    Eigen::Vector3d vel_l(msg.velocity_e, msg.velocity_n, msg.velocity_u);
+    Eigen::Vector3d att(msg.att_e, msg.att_n, msg.att_u);
+
+    // 0 ~ 2PI -> -PI ~ PI
+    for (int i = 0; i < 3; i++){
+        if (att(i) > 180 && att(i) < 360){
+            att(i) = att(i) - 360;
+        }
+    }
+    att = att*DEG_TO_RAD; 
+
+    state_vector_.r_l = pos;
+    state_vector_.v_l = vel_l;
+    state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
+    state_vector_.att_l = att;
+    // std::cout << "\033[33m" << "att" << std::endl << att << "\033[0m" << std::endl;
+}
+
 void Ins_mechanization::Imucallback(const sensor_msgs::Imu& msg){
     // if body frame is enu
     double current_time_tag = msg.header.stamp.toSec();
     Eigen::Vector3d acc_raw(msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z);
     Eigen::Vector3d gyro_raw(msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z);
     Imu_data_calibration(acc_raw, gyro_raw);
-    // acc first then gyro
-    if ((current_time_tag - mech_variables_.compute_time_tag) > 0.005){
+    // /imu_meas topic issue 250 hz
+    static int count = 0;
+    if ((current_time_tag - mech_variables_.compute_time_tag) > 0.005 && count > 1){
+        count = 0;
         compute();
         mech_variables_.compute_time_tag = current_time_tag;
     }
+    else count++;
 }
 
 void Ins_mechanization::Imu_data_calibration(Eigen::Vector3d acc_raw, Eigen::Vector3d gyro_raw){
@@ -265,7 +315,7 @@ void Ins_mechanization::Position_update(){
 void Ins_mechanization::Publish_ins(){
     sensor_msgs::NavSatFix llh;
     geometry_msgs::TwistWithCovarianceStamped vel_l;
-    ins::InsFIX msg;
+    uwb_ins_eskf_msgs::InsFIX msg;
     ros::Time now = ros::Time::now();
 
     msg.header.stamp = now;
@@ -279,6 +329,9 @@ void Ins_mechanization::Publish_ins(){
     msg.att_e = state_vector_.att_l(0)*RAD_TO_DEG;
     msg.att_n = state_vector_.att_l(1)*RAD_TO_DEG;
     msg.att_u = state_vector_.att_l(2)*RAD_TO_DEG;
+    msg.f_e = mech_variables_.f_b(0);
+    msg.f_n = mech_variables_.f_b(1);
+    msg.f_u = mech_variables_.f_b(2);
 
     pub_ins_fix_.publish(msg);
 }
