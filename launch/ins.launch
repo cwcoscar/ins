@@ -1,6 +1,6 @@
 <!---->
 <launch>
-  <arg name="gnss_fix_type" value="1"/> <!-- 0:ublox , 1:novatel-->
+  <arg name="gnss_fix_type" value="0"/> <!-- 0:uwb , 1:ublox , 2:novatel-->
   <arg name="fix_mode" value="1"/> <!-- 0:test mode , 1:fusion mode-->
   
   <node name="ins" pkg="ins" type="main" output="screen">

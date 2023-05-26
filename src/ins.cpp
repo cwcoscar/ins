@@ -128,6 +128,7 @@ void Ins_mechanization::GNSSfixcallback(const sensor_msgs::NavSatFix& msg){
     else if(ins_config_.mode == 1){
         //Don't update
     }
+    if(ins_config_.mode == 0 && att_flag == true) send_tf(state_vector_.r_l, state_vector_.att_l, "ublox");
     fix_flag = true;
 }
 
@@ -151,7 +152,7 @@ void Ins_mechanization::GNSSattcallback(const ublox_msgs::NavATT& msg){
         att(1) = att(0);
         att(0) = tmp;
 
-        // 0 ~ 2PI -> -PI ~ PI
+        // 0 ~ 360 -> -180 ~ 180
         for (int i = 0; i < 3; i++){
             if (att(i) > 180 && att(i) < 360){
                 att(i) = att(i) - 360;
@@ -165,6 +166,7 @@ void Ins_mechanization::GNSSattcallback(const ublox_msgs::NavATT& msg){
     else if(ins_config_.mode == 1){
         //Don't update
     }
+    if(ins_config_.mode == 0 && fix_flag == true) send_tf(state_vector_.r_l, state_vector_.att_l, "ublox");
     att_flag = true;
 }
 
@@ -180,7 +182,37 @@ void Ins_mechanization::Novatelfixcallback(const novatel_gps_msgs::Inspva& msg){
             double tmp = att(1);
             att(1) = att(0);
             att(0) = tmp;
-            // 0 ~ 2PI -> -PI ~ PI
+            // 0 ~ 360 -> -180 ~ 180
+            for (int i = 0; i < 3; i++){
+                if (att(i) > 180 && att(i) < 360){
+                    att(i) = att(i) - 360;
+                }
+            }
+            att = att*DEG_TO_RAD; 
+
+            state_vector_.r_l = pos;
+            state_vector_.v_l = vel_l;
+            state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
+            state_vector_.att_l = att;
+            // std::cout << "\033[33m" << "att" << std::endl << att << "\033[0m" << std::endl;
+            if(ins_config_.mode == 0) send_tf(state_vector_.r_l, state_vector_.att_l, "novatel");
+        }
+        else ins_config_.novatel_count++;
+    }
+    else if(ins_config_.mode == 1){
+        //Don't update
+    }
+    fix_flag = vel_flag = att_flag = true;
+}
+void Ins_mechanization::uwbfixcallback(const uwb_ins_eskf_msgs::uwbFIX& msg){
+    static int control_rate = 3;
+    if(control_rate == 3){
+        if(ins_config_.mode == 0 || fix_flag == false){
+            Eigen::Vector3d pos(msg.latitude, msg.longitude, msg.altitude);
+            Eigen::Vector3d vel_l(msg.velocity_e, msg.velocity_n, msg.velocity_u);
+            Eigen::Vector3d att(msg.att_e, msg.att_n, msg.att_u);
+
+            // 0 ~ 360 -> -180 ~ 180
             for (int i = 0; i < 3; i++){
                 if (att(i) > 180 && att(i) < 360){
                     att(i) = att(i) - 360;
@@ -194,12 +226,12 @@ void Ins_mechanization::Novatelfixcallback(const novatel_gps_msgs::Inspva& msg){
             state_vector_.att_l = att;
             // std::cout << "\033[33m" << "att" << std::endl << att << "\033[0m" << std::endl;
         }
-        else ins_config_.novatel_count++;
+        else if(ins_config_.mode == 1){
+            //Don't update
+        }
+        fix_flag = vel_flag = att_flag = true;
     }
-    else if(ins_config_.mode == 1){
-        //Don't update
-    }
-    fix_flag = vel_flag = att_flag = true;
+    if(control_rate-- == 3) control_rate = 3;
 }
 
 void Ins_mechanization::fusionfixcallback(const uwb_ins_eskf_msgs::fusionFIX& msg){
@@ -209,7 +241,7 @@ void Ins_mechanization::fusionfixcallback(const uwb_ins_eskf_msgs::fusionFIX& ms
     Eigen::Vector3d vel_l(msg.velocity_e, msg.velocity_n, msg.velocity_u);
     Eigen::Vector3d att(msg.att_e, msg.att_n, msg.att_u);
 
-    // 0 ~ 2PI -> -PI ~ PI
+    // 0 ~ 360 -> -180 ~ 180
     for (int i = 0; i < 3; i++){
         if (att(i) > 180 && att(i) < 360){
             att(i) = att(i) - 360;
@@ -231,9 +263,9 @@ void Ins_mechanization::Imucallback(const sensor_msgs::Imu& msg){
     Eigen::Vector3d gyro_raw(msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z);
     Imu_data_calibration(acc_raw, gyro_raw);
     // /imu_meas topic issue 250 hz
-    static int count = 0;
-    if ((current_time_tag - mech_variables_.compute_time_tag) > 0.005 && count > 1){
-        count = 0;
+    static int count = 1;
+    if ((current_time_tag - mech_variables_.compute_time_tag) > 0.005 && count >= 1){
+        count = 1;
         compute();
         mech_variables_.compute_time_tag = current_time_tag;
     }
@@ -248,13 +280,13 @@ void Ins_mechanization::Imu_data_calibration(Eigen::Vector3d acc_raw, Eigen::Vec
                                            0,imu_correction_.acc_scale(1),                           0,
                                            0,                          0, imu_correction_.acc_scale(2);   
     acc_calibrated = (Eigen::MatrixXd::Identity(3,3) + acc_scale).inverse() * (acc_raw - imu_correction_.acc_bias);
-    acc_calibrated = (acc_raw - imu_correction_.acc_bias);
+    // acc_calibrated = (acc_raw - imu_correction_.acc_bias);
     Eigen::Vector3d gyro_calibrated;
     Eigen::Matrix3d gyro_scale;
     gyro_scale << imu_correction_.gyro_scale(0),                           0,                            0,
                                              0,imu_correction_.gyro_scale(1),                            0,
                                              0,                           0, imu_correction_.gyro_scale(2);   
-    gyro_calibrated = (Eigen::MatrixXd::Identity(3,3) + gyro_scale).inverse() * (gyro_raw - imu_correction_.gyro_bias);
+    gyro_calibrated = (gyro_raw - imu_correction_.gyro_bias);
     // if body frame is enu
     // mech_variables_.f_b = acc_calibrated;
     // mech_variables_.w_ib_b = gyro_calibrated;
@@ -332,9 +364,40 @@ void Ins_mechanization::Position_update(){
     // std::cout << "ENU now: " << std::endl << pos_enu << std::endl;
 }
 
+void Ins_mechanization::send_tf(){
+    tf::Transform transform;
+    tf::Quaternion current_q;
+    ros::Time now = ros::Time::now();
+    
+    Eigen::Vector3d now_enu = coordinate_mat_transformation::lla2enu(state_vector_.r_l, nckuee);
+    // std::cout << "\033[33m" << "ENU:" << std::endl << now_enu << "\033[0m" << std::endl;
+    // std::cout << "\033[33m" << "yaw: " << -state_vector_.att_l(2) << "\033[0m" << std::endl;
+
+    current_q.setRPY(state_vector_.att_l(0), 
+                    state_vector_.att_l(1), 
+                    state_vector_.att_l(2)); // refer to "map" frame (ENU)
+
+    transform.setOrigin(tf::Vector3(now_enu(0), now_enu(1), now_enu(2)));
+    transform.setRotation(current_q);
+    br_.sendTransform(tf::StampedTransform(transform, now, "/map", "ins"));
+}
+
+void Ins_mechanization::send_tf(Eigen::Vector3d now_lla, Eigen::Vector3d now_att, std::string frame){
+    tf::Transform transform;
+    tf::Quaternion current_q;
+    ros::Time now = ros::Time::now();
+    
+    Eigen::Vector3d now_enu = coordinate_mat_transformation::lla2enu(now_lla, nckuee);
+    // std::cout << "\033[33m" << "ENU:" << std::endl << now_enu << "\033[0m" << std::endl;
+
+    current_q.setRPY(now_att(0), now_att(1), now_att(2)); // refer to "map" frame (ENU)
+
+    transform.setOrigin(tf::Vector3(now_enu(0), now_enu(1), now_enu(2)));
+    transform.setRotation(current_q);
+    br_.sendTransform(tf::StampedTransform(transform, now, "/map", frame));
+}
+
 void Ins_mechanization::Publish_ins(){
-    sensor_msgs::NavSatFix llh;
-    geometry_msgs::TwistWithCovarianceStamped vel_l;
     uwb_ins_eskf_msgs::InsFIX msg;
     ros::Time now = ros::Time::now();
 
@@ -346,9 +409,16 @@ void Ins_mechanization::Publish_ins(){
     msg.velocity_e = state_vector_.v_l(0);
     msg.velocity_n = state_vector_.v_l(1);
     msg.velocity_u = state_vector_.v_l(2);
-    msg.att_e = state_vector_.att_l(0)*RAD_TO_DEG;
-    msg.att_n = state_vector_.att_l(1)*RAD_TO_DEG;
-    msg.att_u = state_vector_.att_l(2)*RAD_TO_DEG;
+    // 0 ~ 360 -> -180 ~ 180
+    Eigen::Vector3d att = state_vector_.att_l*RAD_TO_DEG;
+    for (int i = 0; i < 3; i++){
+        if (att(i) > 180 && att(i) < 360){
+            att(i) = att(i) - 360;
+        }
+    }
+    msg.att_e = att(0);
+    msg.att_n = att(1);
+    msg.att_u = att(2);
     msg.f_e = mech_variables_.f_b(0);
     msg.f_n = mech_variables_.f_b(1);
     msg.f_u = mech_variables_.f_b(2);
@@ -365,5 +435,6 @@ void Ins_mechanization::compute(){
         Velocity_update();
         Position_update();
         Publish_ins();
+        send_tf();
     }
 }

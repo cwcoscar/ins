@@ -16,17 +16,21 @@ int main(int argc, char **argv) {
     INS::Ins_mechanization ublox_ins(pub_ins_fix, ins_config);
 
     // Subscribers of GNSS data
-    ros::Subscriber sub_att;
-    ros::Subscriber sub_pos;
-    ros::Subscriber sub_vel;
+    ros::Subscriber sub_ublox_att;
+    ros::Subscriber sub_ublox_pos;
+    ros::Subscriber sub_ublox_vel;
     ros::Subscriber sub_novatel;
+    ros::Subscriber sub_uwb;
     ros::Subscriber sub_eskf;
     if(ins_config.fix_type == 0){
-        sub_att = n.subscribe("/ublox_f9k/navatt", 1, &INS::Ins_mechanization::GNSSattcallback, &ublox_ins);
-        sub_pos = n.subscribe("/ublox_f9k/fix", 1, &INS::Ins_mechanization::GNSSfixcallback, &ublox_ins);
-        sub_vel = n.subscribe("/ublox_f9k/fix_velocity", 1, &INS::Ins_mechanization::GNSSvelcallback, &ublox_ins);
+        sub_uwb = n.subscribe("/uwb_position/A0", 1, &INS::Ins_mechanization::uwbfixcallback, &ublox_ins);
     }
     else if(ins_config.fix_type == 1){
+        sub_ublox_att = n.subscribe("/ublox_f9k/navatt", 1, &INS::Ins_mechanization::GNSSattcallback, &ublox_ins);
+        sub_ublox_pos = n.subscribe("/ublox_f9k/fix", 1, &INS::Ins_mechanization::GNSSfixcallback, &ublox_ins);
+        sub_ublox_vel = n.subscribe("/ublox_f9k/fix_velocity", 1, &INS::Ins_mechanization::GNSSvelcallback, &ublox_ins);
+    }
+    else if(ins_config.fix_type == 2){
         sub_novatel = n.subscribe("/novatel/inspva", 1, &INS::Ins_mechanization::Novatelfixcallback, &ublox_ins);
     }
     
