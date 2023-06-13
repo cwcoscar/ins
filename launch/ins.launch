@@ -1,10 +1,15 @@
 <!---->
 <launch>
   <arg name="gnss_fix_type" value="0"/> <!-- 0:uwb , 1:ublox , 2:novatel-->
+  <arg name="odometer" value="2"/> <!-- 0:off , 1:odometer, 2:GNSS speed-->
   <arg name="fix_mode" value="1"/> <!-- 0:test mode , 1:fusion mode-->
-  
+  <arg name="body_frame" value="0"/> <!-- 0:enu , 1:nwu-->
+
+
   <node name="ins" pkg="ins" type="main" output="screen">
     <param name="gnss_fix_type" value="$(arg gnss_fix_type)" type="int"/>
+    <param name="odometer" value="$(arg odometer)" type="int"/>
     <param name="fix_mode" value="$(arg fix_mode)" type="int"/>
+    <param name="body_frame" value="$(arg body_frame)" type="int"/>
   </node>
 </launch>

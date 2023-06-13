@@ -56,6 +56,7 @@ namespace coordinate_mat_transformation
         q.normalize(); // check and make it orthogonal
         Eigen::Matrix3d Rotation_matrix = q.toRotationMatrix();
 
+        // R=RxRyRz
         att(0) = atan2(-Rotation_matrix(1,2), Rotation_matrix(2,2));//atan2(y,x)
         att(1) = asin(Rotation_matrix(0,2));
         att(2) = atan2(-Rotation_matrix(0,1), Rotation_matrix(0,0));

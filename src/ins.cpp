@@ -10,7 +10,6 @@ static bool att_flag = false;
 Eigen::Vector3d a_b(-0.348513345960806, -0.26021251227717, 0.132337782341719);
 Eigen::Vector3d a_s(-0.00426378745053201, 0.000725755116990245, 0.00263712381843959);
 Eigen::Vector3d g_b(0.00710659149934062, 0.00211909908717263, -0.0000592951099686292);
-Eigen::Vector3d g_s(-2.36707629594559, -0.490347919324706, -0.686283178454847);
 Eigen::Vector3d nckuee(NCKUEE_LATITUDE, NCKUEE_LONGITUDE, NCKUEE_HEIGHT);
 
 Ins_mechanization::Ins_mechanization(ros::Publisher pub_fix, config ins_config) 
@@ -18,7 +17,6 @@ Ins_mechanization::Ins_mechanization(ros::Publisher pub_fix, config ins_config)
     imu_correction_.acc_bias = a_b;
     imu_correction_.acc_scale = a_s;
     imu_correction_.gyro_bias = g_b;
-    imu_correction_.gyro_scale = g_s;
 }
 
 inline double Ins_mechanization::gravity(double lat_rad){
@@ -97,19 +95,70 @@ void Ins_mechanization::Q_dot_update(mechanization& variables, state& vec){
 }
 
 void Ins_mechanization::v_dot_l_update(mechanization& variables, state& vec){
+    static bool flag_static = false;
+    double amplify = 1000;
+    static std::vector<Eigen::Vector3d> f_b_window;
+
     Eigen::MatrixXd omega_ie_l;
     omega_ie_l = omega_ie_l_update(vec);
     Eigen::MatrixXd omega_el_l;
     omega_el_l = omega_el_l_update(vec);
     
     Eigen::Vector3d g_l(0, 0, -gravity(vec.r_l(0)*DEG_TO_RAD));
-    variables.v_dot_l_past = variables.v_dot_l_now;
-    variables.v_dot_l_now = vec.R_b_l * variables.f_b - (2*omega_ie_l + omega_el_l)*vec.v_l + vec.R_b_l * g_l;
 
-    // std::cout << "att" << std::endl << vec.att_l << std::endl;
-    // std::cout << "vec.R_b_l" << std::endl << vec.R_b_l << std::endl;
-    // std::cout << "variables.f_b" << std::endl << variables.f_b << std::endl;
-    // std::cout << "vec.R_b_l * variables.f_b" << std::endl << vec.R_b_l * variables.f_b << std::endl;
+    if(flag_static == true){
+        variables.v_dot_l_past = amplify*variables.v_dot_l_now;
+    }
+    else{
+        variables.v_dot_l_past = variables.v_dot_l_now;
+    }
+
+    // Use Sliding window of f_b to check if vehicle is static
+    Eigen::Vector3d f_b_mean(0,0,0);
+    Eigen::Vector3d g_b_mean(0,0,0);
+    for(int i = 0; i < f_b_window.size(); i++){
+        f_b_mean = f_b_mean + f_b_window[i];
+        if(f_b_window.size() >= 5 && i < f_b_window.size() && i >= f_b_window.size()-5){
+            g_b_mean = g_b_mean + f_b_window[i];
+        }
+    }
+    f_b_mean = f_b_mean/f_b_window.size();
+    g_b_mean = g_b_mean/5;
+
+    // gravity compensation 
+    /* 
+    Revised 
+    // Due to unsteady of attitude, gravity can't be derived from attitude accurately
+    // Calculate mean acceleration of a short period to approximate the gravity.
+    */
+    variables.v_dot_l_now = vec.R_b_l*(variables.f_b - g_b_mean) - (2*omega_ie_l + omega_el_l)*vec.v_l;
+    /* origin */
+    // variables.v_dot_l_now = (vec.R_b_l * variables.f_b - (2*omega_ie_l + omega_el_l)*vec.v_l + vec.R_b_l * g_l);
+
+    // When vehicle is static, jitter of IMU measurements is small.
+    if((variables.f_b-f_b_mean).norm() < 0.1){
+        variables.v_dot_l_now = (1/amplify)*variables.v_dot_l_now;
+        flag_static = true;
+    }
+    else {
+        flag_static = false;
+    }
+
+    // Sliding window of f_b
+    if(f_b_window.size() < 100){
+        f_b_window.push_back(variables.f_b);
+    }
+    else if (f_b_window.size() == 100){
+        f_b_window.push_back(variables.f_b);
+        f_b_window.erase(f_b_window.begin());
+    }
+
+    // std::cout << "------" << std::endl;
+    // std::cout << "norm of diff" << std::endl << (variables.f_b-f_b_mean).norm() << std::endl;
+    // std::cout << "flag_static" << std::endl << flag_static << std::endl;
+    // std::cout << "variables.f_b - g_b_mean: " << std::endl << variables.f_b - g_b_mean << std::endl;
+    // std::cout << "v_dot_l_now: " << std::endl << variables.v_dot_l_now << std::endl;
+    // std::cout << "------" << std::endl;
 }
 
 void Ins_mechanization::r_dot_l_update(mechanization& variables, state& vec){
@@ -133,14 +182,28 @@ void Ins_mechanization::GNSSfixcallback(const sensor_msgs::NavSatFix& msg){
 }
 
 void Ins_mechanization::GNSSvelcallback(const geometry_msgs::TwistWithCovarianceStamped& msg){ // /ublox_f9k/fix_velocity:ENU
-    if(ins_config_.mode == 0 || vel_flag == false){
+    if(ins_config_.odometer == 0 && (ins_config_.mode == 0 || vel_flag == false)){
         Eigen::Vector3d vel_l(msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z);
         state_vector_.v_l = vel_l;
+        vel_flag = true;
     }
     else if(ins_config_.mode == 1){
         //Don't update
     }
-    vel_flag = true;
+}
+
+void Ins_mechanization::GNSSspeedcallback(const ublox_msgs::NavPVT& msg){ // /ublox_f9k/navpvt
+    if(ins_config_.mode == 0 || vel_flag == false){
+        state_vector_.v_forward = (double)msg.gSpeed/1000;
+        // std::cout << "\033[33m" << "v_forward" << std::endl << state_vector_.v_forward << "\033[0m" << std::endl;
+        vel_flag = true;
+    }
+    else if(ins_config_.mode == 1){
+        //Don't update
+        state_vector_.v_forward = (double)msg.gSpeed/1000;
+        // std::cout << "\033[33m" << "v_forward" << std::endl << state_vector_.v_forward << "\033[0m" << std::endl;
+        vel_flag = true;
+    }
 }
             
 void Ins_mechanization::GNSSattcallback(const ublox_msgs::NavATT& msg){ 
@@ -190,10 +253,20 @@ void Ins_mechanization::Novatelfixcallback(const novatel_gps_msgs::Inspva& msg){
             }
             att = att*DEG_TO_RAD; 
 
-            state_vector_.r_l = pos;
-            state_vector_.v_l = vel_l;
-            state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
-            state_vector_.att_l = att;
+            // If odometer is on, velocity isn't updated with Novatel
+            if(ins_config_.odometer == 0){
+                state_vector_.r_l = pos;
+                state_vector_.v_l = vel_l;
+                state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
+                state_vector_.att_l = att;
+                fix_flag = vel_flag = att_flag = true;
+            }
+            else{
+                state_vector_.r_l = pos;
+                state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
+                state_vector_.att_l = att;
+                fix_flag = att_flag = true;
+            }
             // std::cout << "\033[33m" << "att" << std::endl << att << "\033[0m" << std::endl;
             if(ins_config_.mode == 0) send_tf(state_vector_.r_l, state_vector_.att_l, "novatel");
         }
@@ -202,7 +275,6 @@ void Ins_mechanization::Novatelfixcallback(const novatel_gps_msgs::Inspva& msg){
     else if(ins_config_.mode == 1){
         //Don't update
     }
-    fix_flag = vel_flag = att_flag = true;
 }
 void Ins_mechanization::uwbfixcallback(const uwb_ins_eskf_msgs::uwbFIX& msg){
     static int control_rate = 3;
@@ -220,16 +292,24 @@ void Ins_mechanization::uwbfixcallback(const uwb_ins_eskf_msgs::uwbFIX& msg){
             }
             att = att*DEG_TO_RAD; 
 
-            state_vector_.r_l = pos;
-            state_vector_.v_l = vel_l;
-            state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
-            state_vector_.att_l = att;
-            // std::cout << "\033[33m" << "att" << std::endl << att << "\033[0m" << std::endl;
+            // If odometer is on, velocity isn't updated with UWB
+            if(ins_config_.odometer == 0){
+                state_vector_.r_l = pos;
+                state_vector_.v_l = vel_l;
+                state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
+                state_vector_.att_l = att;
+                fix_flag = vel_flag = att_flag = true;
+            }
+            else{
+                state_vector_.r_l = pos;
+                state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
+                state_vector_.att_l = att;
+                fix_flag  = att_flag = true;
+            }
         }
         else if(ins_config_.mode == 1){
             //Don't update
         }
-        fix_flag = vel_flag = att_flag = true;
     }
     if(control_rate-- == 3) control_rate = 3;
 }
@@ -272,6 +352,16 @@ void Ins_mechanization::Imucallback(const sensor_msgs::Imu& msg){
     else count++;
 }
 
+void Ins_mechanization::Odometercallback(const geometry_msgs::TwistStamped& msg){
+    if(ins_config_.mode == 0 || vel_flag == false){
+        state_vector_.v_forward = msg.twist.linear.x;
+        vel_flag = true;
+    }
+    else if(ins_config_.mode == 1){
+        //Don't update
+    }
+}
+
 void Ins_mechanization::Imu_data_calibration(Eigen::Vector3d acc_raw, Eigen::Vector3d gyro_raw){
     // save last raw data
     Eigen::Vector3d acc_calibrated;
@@ -283,23 +373,25 @@ void Ins_mechanization::Imu_data_calibration(Eigen::Vector3d acc_raw, Eigen::Vec
     // acc_calibrated = (acc_raw - imu_correction_.acc_bias);
     Eigen::Vector3d gyro_calibrated;
     Eigen::Matrix3d gyro_scale;
-    gyro_scale << imu_correction_.gyro_scale(0),                           0,                            0,
-                                             0,imu_correction_.gyro_scale(1),                            0,
-                                             0,                           0, imu_correction_.gyro_scale(2);   
     gyro_calibrated = (gyro_raw - imu_correction_.gyro_bias);
-    // if body frame is enu
-    // mech_variables_.f_b = acc_calibrated;
-    // mech_variables_.w_ib_b = gyro_calibrated;
 
-    // if body frame is nwu
-    mech_variables_.f_b(0) = -acc_calibrated(1);
-    mech_variables_.f_b(1) = acc_calibrated(0);
-    mech_variables_.f_b(2) = acc_calibrated(2);
-    mech_variables_.w_ib_b(0) = -gyro_calibrated(1);
-    mech_variables_.w_ib_b(1) = gyro_calibrated(0);
-    mech_variables_.w_ib_b(2) = gyro_calibrated(2);
-    // std::cout << "f_b" << std::endl << mech_variables_.f_b << std::endl;
-    // std::cout << "w_ib_b" << std::endl << mech_variables_.w_ib_b << std::endl;
+    if(ins_config_.b_frame == 0){
+        // if body frame is enu
+        mech_variables_.f_b = acc_calibrated;
+        mech_variables_.w_ib_b = gyro_calibrated;
+        // std::cout << "b-frame: ENU" << std::endl;
+    }
+    else if(ins_config_.b_frame == 1){
+        // if body frame is nwu
+        mech_variables_.f_b(0) = -acc_calibrated(1);
+        mech_variables_.f_b(1) = acc_calibrated(0);
+        mech_variables_.f_b(2) = acc_calibrated(2);
+        mech_variables_.w_ib_b(0) = -gyro_calibrated(1);
+        mech_variables_.w_ib_b(1) = gyro_calibrated(0);
+        mech_variables_.w_ib_b(2) = gyro_calibrated(2);
+        // std::cout << "b-frame: NWU" << std::endl;
+    }
+    
 }
 
 void Ins_mechanization::Initialize_state(){
@@ -419,9 +511,10 @@ void Ins_mechanization::Publish_ins(){
     msg.att_e = att(0);
     msg.att_n = att(1);
     msg.att_u = att(2);
-    msg.f_e = mech_variables_.f_b(0);
-    msg.f_n = mech_variables_.f_b(1);
-    msg.f_u = mech_variables_.f_b(2);
+    Eigen::Vector3d f_l = state_vector_.R_b_l * mech_variables_.f_b;
+    msg.f_e = f_l(0);
+    msg.f_n = f_l(1);
+    msg.f_u = f_l(2);
 
     pub_ins_fix_.publish(msg);
 }
@@ -432,6 +525,14 @@ void Ins_mechanization::compute(){
     }
     else{
         Attitude_update();
+        // If Odometer is on
+        // Update velocity with GNSS speed / Odometer measuenment
+        if(ins_config_.odometer != 0){
+            Eigen::Vector3d vel_b(0, state_vector_.v_forward, 0); //enu
+            state_vector_.v_l = state_vector_.R_b_l*vel_b;
+            // std::cout << "\033[33m" << "state_vector_.v_l" << std::endl << state_vector_.v_l << "\033[0m" << std::endl;
+            // std::cout << "\033[33m" << "v_forward" << std::endl << state_vector_.v_forward << "\033[0m" << std::endl;
+        }
         Velocity_update();
         Position_update();
         Publish_ins();

@@ -3,7 +3,9 @@
 #include "ros/ros.h"
 #include <sensor_msgs/Imu.h>
 #include <geometry_msgs/TwistWithCovarianceStamped.h>
+#include <geometry_msgs/TwistStamped.h>
 #include <ublox_msgs/NavATT.h>
+#include <ublox_msgs/NavPVT.h>
 #include <sensor_msgs/NavSatFix.h>
 #include <novatel_gps_msgs/Inspva.h>
 #include <uwb_ins_eskf_msgs/fusionFIX.h>
@@ -51,7 +53,9 @@ namespace INS
     typedef struct INS_config{
         int mode;
         int fix_type;
+        int odometer;
         int novatel_count = 100;
+        int b_frame;
     }config;
 
     typedef struct imu_calibration_parameter{
@@ -78,6 +82,7 @@ namespace INS
     typedef struct ins_state_vector{
         Eigen::VectorXd r_l; // latitude longitude height (deg)
         Eigen::VectorXd v_l; // east north up (m/s)
+        double v_forward; // (m/s)
         Eigen::MatrixXd R_b_l; //rotation matrix
         Eigen::VectorXd att_l; // roll pitch yaw (rad)
     }state;
@@ -93,7 +98,6 @@ namespace INS
             config ins_config_;
         public:
             Ins_mechanization(ros::Publisher pub_fix, config ins_config);
-            // imu_calibration imu_correction;
             double gravity(double lat_rad);
             double earth_radius_along_meridian(double lat_rad);
             double earth_radius_along_prime_vertical(double lat_rad);
@@ -110,11 +114,13 @@ namespace INS
 
             void GNSSfixcallback(const sensor_msgs::NavSatFix& msg);
             void GNSSvelcallback(const geometry_msgs::TwistWithCovarianceStamped& msg);
+            void GNSSspeedcallback(const ublox_msgs::NavPVT& msg);
             void GNSSattcallback(const ublox_msgs::NavATT& msg);
             void Novatelfixcallback(const novatel_gps_msgs::Inspva& msg);
             void uwbfixcallback(const uwb_ins_eskf_msgs::uwbFIX& msg);
             void fusionfixcallback(const uwb_ins_eskf_msgs::fusionFIX& msg);
             void Imucallback(const sensor_msgs::Imu& msg);
+            void Odometercallback(const geometry_msgs::TwistStamped& msg);
 
             void Imu_data_calibration(Eigen::Vector3d acc_raw, Eigen::Vector3d gyro_raw);
             void Initialize_state();

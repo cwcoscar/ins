@@ -8,7 +8,9 @@ int main(int argc, char **argv) {
     ros::NodeHandle nh("~");
 
     nh.param("gnss_fix_type", ins_config.fix_type, 0);
+    nh.param("odometer", ins_config.odometer, 0);
     nh.param("fix_mode", ins_config.mode, 0);
+    nh.param("body_frame", ins_config.b_frame, 1);
 
     // Publishers of ins solution
     ros::Publisher pub_ins_fix = n.advertise<uwb_ins_eskf_msgs::InsFIX>("/ins/fix", 1);
@@ -19,6 +21,8 @@ int main(int argc, char **argv) {
     ros::Subscriber sub_ublox_att;
     ros::Subscriber sub_ublox_pos;
     ros::Subscriber sub_ublox_vel;
+    ros::Subscriber sub_ublox_speed;
+    ros::Subscriber sub_odo_speed;
     ros::Subscriber sub_novatel;
     ros::Subscriber sub_uwb;
     ros::Subscriber sub_eskf;
@@ -32,6 +36,16 @@ int main(int argc, char **argv) {
     }
     else if(ins_config.fix_type == 2){
         sub_novatel = n.subscribe("/novatel/inspva", 1, &INS::Ins_mechanization::Novatelfixcallback, &ublox_ins);
+    }
+
+    if(ins_config.odometer == 0){
+
+    }
+    else if (ins_config.odometer == 1){
+        sub_odo_speed = n.subscribe("/can_velocity", 1, &INS::Ins_mechanization::Odometercallback, &ublox_ins);
+    }
+    else if (ins_config.odometer == 2){
+        sub_ublox_speed = n.subscribe("/ublox_f9k/navpvt", 1, &INS::Ins_mechanization::GNSSspeedcallback, &ublox_ins);
     }
     
     if(ins_config.mode == 1){
