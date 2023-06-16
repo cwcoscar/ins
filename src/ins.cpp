@@ -179,6 +179,7 @@ void Ins_mechanization::GNSSfixcallback(const sensor_msgs::NavSatFix& msg){
     }
     if(ins_config_.mode == 0 && att_flag == true) send_tf(state_vector_.r_l, state_vector_.att_l, "ublox");
     fix_flag = true;
+    ins_config_.transform2baselink = false;
 }
 
 void Ins_mechanization::GNSSvelcallback(const geometry_msgs::TwistWithCovarianceStamped& msg){ // /ublox_f9k/fix_velocity:ENU
@@ -255,18 +256,15 @@ void Ins_mechanization::Novatelfixcallback(const novatel_gps_msgs::Inspva& msg){
 
             // If odometer is on, velocity isn't updated with Novatel
             if(ins_config_.odometer == 0){
-                state_vector_.r_l = pos;
                 state_vector_.v_l = vel_l;
-                state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
-                state_vector_.att_l = att;
-                fix_flag = vel_flag = att_flag = true;
+                vel_flag = true;
             }
-            else{
-                state_vector_.r_l = pos;
-                state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
-                state_vector_.att_l = att;
-                fix_flag = att_flag = true;
-            }
+            state_vector_.r_l = pos;
+            state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
+            state_vector_.att_l = att;
+            fix_flag = att_flag = true;
+            ins_config_.transform2baselink = false;
+
             // std::cout << "\033[33m" << "att" << std::endl << att << "\033[0m" << std::endl;
             if(ins_config_.mode == 0) send_tf(state_vector_.r_l, state_vector_.att_l, "novatel");
         }
@@ -294,18 +292,14 @@ void Ins_mechanization::uwbfixcallback(const uwb_ins_eskf_msgs::uwbFIX& msg){
 
             // If odometer is on, velocity isn't updated with UWB
             if(ins_config_.odometer == 0){
-                state_vector_.r_l = pos;
                 state_vector_.v_l = vel_l;
-                state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
-                state_vector_.att_l = att;
-                fix_flag = vel_flag = att_flag = true;
+                vel_flag = true;
             }
-            else{
-                state_vector_.r_l = pos;
-                state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
-                state_vector_.att_l = att;
-                fix_flag  = att_flag = true;
-            }
+            state_vector_.r_l = pos;
+            state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
+            state_vector_.att_l = att;
+            fix_flag = att_flag = true;
+            ins_config_.transform2baselink = false;
         }
         else if(ins_config_.mode == 1){
             //Don't update
@@ -360,6 +354,26 @@ void Ins_mechanization::Odometercallback(const geometry_msgs::TwistStamped& msg)
     else if(ins_config_.mode == 1){
         //Don't update
     }
+}
+
+
+void Ins_mechanization::transform2baselink(){
+    Eigen::Vector3d ref_lla(NCKUEE_LATITUDE, NCKUEE_LONGITUDE, NCKUEE_HEIGHT);
+    Eigen::Vector3d r_b;
+    if(ins_config_.fix_type == 0){
+        r_b = ins_config_.uwb_b;
+    }
+    else if(ins_config_.fix_type == 1 || ins_config_.fix_type == 2){
+        r_b = ins_config_.gnss_b;
+    }
+
+    Eigen::Vector3d r_enu = coordinate_mat_transformation::lla2enu(state_vector_.r_l ,ref_lla);
+    Eigen::Vector3d baselink_enu = r_enu - state_vector_.R_b_l*r_b;
+    Eigen::VectorXd baselink_lla = coordinate_mat_transformation::enu2Geodetic(baselink_enu ,ref_lla);
+    state_vector_.r_l = baselink_lla;
+    ins_config_.transform2baselink = true;
+    // std::cout << "r_enu: " << std::endl << r_enu << std::endl;
+    // std::cout << "baselink_enu: " << std::endl << baselink_enu << std::endl;
 }
 
 void Ins_mechanization::Imu_data_calibration(Eigen::Vector3d acc_raw, Eigen::Vector3d gyro_raw){
@@ -471,7 +485,7 @@ void Ins_mechanization::send_tf(){
 
     transform.setOrigin(tf::Vector3(now_enu(0), now_enu(1), now_enu(2)));
     transform.setRotation(current_q);
-    br_.sendTransform(tf::StampedTransform(transform, now, "/map", "ins"));
+    br_.sendTransform(tf::StampedTransform(transform, now, "/map", "ins_baselink"));
 }
 
 void Ins_mechanization::send_tf(Eigen::Vector3d now_lla, Eigen::Vector3d now_att, std::string frame){
@@ -534,6 +548,11 @@ void Ins_mechanization::compute(){
             // std::cout << "\033[33m" << "v_forward" << std::endl << state_vector_.v_forward << "\033[0m" << std::endl;
         }
         Velocity_update();
+        // Check if position is tranform to baselink
+        if(!ins_config_.transform2baselink){
+            transform2baselink();
+            std::cout << "\033[33m" << "Transform to baselink !" << "\033[0m" << std::endl;
+        }
         Position_update();
         Publish_ins();
         send_tf();

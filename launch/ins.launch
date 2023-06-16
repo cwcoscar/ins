@@ -1,15 +1,29 @@
 <!---->
 <launch>
-  <arg name="gnss_fix_type" value="0"/> <!-- 0:uwb , 1:ublox , 2:novatel-->
-  <arg name="odometer" value="2"/> <!-- 0:off , 1:odometer, 2:GNSS speed-->
-  <arg name="fix_mode" value="1"/> <!-- 0:test mode , 1:fusion mode-->
-  <arg name="body_frame" value="0"/> <!-- 0:enu , 1:nwu-->
+  <arg name="gnss_fix_type" value="2"/> <!-- 0:uwb , 1:ublox , 2:novatel-->
+  <arg name="speedometer" value="0"/> <!-- 0:off , 1:odometer, 2:GNSS speed-->
+  <arg name="fix_mode" value="0"/> <!-- 0:test mode , 1:fusion mode-->
+  <arg name="body_frame" value="1"/> <!-- 0:enu , 1:nwu-->
+  <!-- GNSS Antenna in b-frame-->
+  <arg name="antenna_x" value="0.00"/>
+  <arg name="antenna_y" value="0.25"/>
+  <arg name="antenna_z" value="0.43"/>
+  <!-- Anchor location in b-frame-->
+  <arg name="A0_x" value="0.00"/>
+  <arg name="A0_y" value="0.05"/>
+  <arg name="A0_z" value="0.43"/>
 
 
   <node name="ins" pkg="ins" type="main" output="screen">
     <param name="gnss_fix_type" value="$(arg gnss_fix_type)" type="int"/>
-    <param name="odometer" value="$(arg odometer)" type="int"/>
+    <param name="odometer" value="$(arg speedometer)" type="int"/>
     <param name="fix_mode" value="$(arg fix_mode)" type="int"/>
     <param name="body_frame" value="$(arg body_frame)" type="int"/>
+    <param name="antenna_x" value="$(arg antenna_x)" type="double"/>
+    <param name="antenna_y" value="$(arg antenna_y)" type="double"/>
+    <param name="antenna_z" value="$(arg antenna_z)" type="double"/>
+    <param name="A0_x" value="$(arg A0_x)" type="double"/>
+    <param name="A0_y" value="$(arg A0_y)" type="double"/>
+    <param name="A0_z" value="$(arg A0_z)" type="double"/>
   </node>
 </launch>

@@ -56,6 +56,9 @@ namespace INS
         int odometer;
         int novatel_count = 100;
         int b_frame;
+        Eigen::Vector3d gnss_b;
+        Eigen::Vector3d uwb_b;
+        bool transform2baselink = false;
     }config;
 
     typedef struct imu_calibration_parameter{
@@ -121,7 +124,8 @@ namespace INS
             void fusionfixcallback(const uwb_ins_eskf_msgs::fusionFIX& msg);
             void Imucallback(const sensor_msgs::Imu& msg);
             void Odometercallback(const geometry_msgs::TwistStamped& msg);
-
+            
+            void transform2baselink();
             void Imu_data_calibration(Eigen::Vector3d acc_raw, Eigen::Vector3d gyro_raw);
             void Initialize_state();
             void Attitude_update();
