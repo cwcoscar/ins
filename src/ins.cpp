@@ -7,6 +7,7 @@ static bool fix_flag = false;
 static bool vel_flag = false;
 static bool att_flag = false;
 
+/* IMU Calibration parameters */
 Eigen::Vector3d a_b(-0.348513345960806, -0.26021251227717, 0.132337782341719);
 Eigen::Vector3d a_s(-0.00426378745053201, 0.000725755116990245, 0.00263712381843959);
 Eigen::Vector3d g_b(0.00710659149934062, 0.00211909908717263, -0.0000592951099686292);
@@ -57,7 +58,8 @@ Eigen::MatrixXd Ins_mechanization::omega_ie_l_update(state& vector){
     return coordinate_mat_transformation::Skew_symmetric_transform(w_ie_l_update(vector.r_l(0)*DEG_TO_RAD), 3);
 }
 
-Eigen::MatrixXd Ins_mechanization::omega_il_b_update(state& vector, int dim){ //dim = 3 or 4
+/* dim = 3 or 4 */
+Eigen::MatrixXd Ins_mechanization::omega_il_b_update(state& vector, int dim){ 
     Eigen::VectorXd w_il_b(3);
     w_il_b = w_el_l_update(vector.v_l,vector.r_l(0)*DEG_TO_RAD,vector.r_l(2)) + w_ie_l_update(vector.r_l(0)*DEG_TO_RAD);
     return coordinate_mat_transformation::Skew_symmetric_transform(vector.R_b_l.transpose()*w_il_b, dim);
@@ -82,12 +84,11 @@ void Ins_mechanization::R_dot_l_b_update(mechanization& variables, state& vec){
 }
 
 void Ins_mechanization::Q_dot_update(mechanization& variables, state& vec){
+    /* omega_il_b and omega_il_b are supposed to be small compared with measurement */
     Eigen::MatrixXd omega_il_b;
     omega_il_b = omega_il_b_update(vec,4);
-    // std::cout << "w_il_b" << std::endl <<  w_el_l_update(vec.v_l,vec.r_l(0),vec.r_l(2)) + w_ie_l_update(vec.r_l(0)*DEG_TO_RAD) << std::endl;
     Eigen::MatrixXd omega_ib_b;
     omega_ib_b = coordinate_mat_transformation::Skew_symmetric_transform(variables.w_ib_b, 4);
-    // std::cout << "w_ib_b" << std::endl << variables.w_ib_b << std::endl;
     Eigen::VectorXd Q;
     Q = coordinate_mat_transformation::att_Q_transform(vec.att_l);
     variables.Q_dot_past = variables.Q_dot_now;
@@ -107,13 +108,20 @@ void Ins_mechanization::v_dot_l_update(mechanization& variables, state& vec){
     Eigen::Vector3d g_l(0, 0, -gravity(vec.r_l(0)*DEG_TO_RAD));
 
     if(flag_static == true){
+        /* If the vehicle is static, velocity is constraint by a scaler */
+        state_vector_.v_l = 0.1*state_vector_.v_l;
+        /* Resume last v_dot */
         variables.v_dot_l_past = amplify*variables.v_dot_l_now;
     }
     else{
         variables.v_dot_l_past = variables.v_dot_l_now;
     }
 
-    // Use Sliding window of f_b to check if vehicle is static
+    /* Use Sliding window of f_b to check if vehicle is static */
+    /* 
+    f_b_mean is the mean acceleration in sliding window which has length @ 100
+    g_b_mean is the mean of closest 5 measurements
+    */
     Eigen::Vector3d f_b_mean(0,0,0);
     Eigen::Vector3d g_b_mean(0,0,0);
     for(int i = 0; i < f_b_window.size(); i++){
@@ -125,26 +133,30 @@ void Ins_mechanization::v_dot_l_update(mechanization& variables, state& vec){
     f_b_mean = f_b_mean/f_b_window.size();
     g_b_mean = g_b_mean/5;
 
-    // gravity compensation 
+    /* gravity compensation */
     /* 
-    Revised 
-    // Due to unsteady of attitude, gravity can't be derived from attitude accurately
-    // Calculate mean acceleration of a short period to approximate the gravity.
+    - original method: 
+        approximate gravity vector by attitude
+    - Revised method:
+        Due to unsteady of attitude, gravity can't be derived from attitude accurately
+        Calculate mean acceleration of a short period (5 measurements) to approximate the gravity.
+        (first 5 measurement use original method)
     */
-    variables.v_dot_l_now = vec.R_b_l*(variables.f_b - g_b_mean) - (2*omega_ie_l + omega_el_l)*vec.v_l;
-    /* origin */
-    // variables.v_dot_l_now = (vec.R_b_l * variables.f_b - (2*omega_ie_l + omega_el_l)*vec.v_l + vec.R_b_l * g_l);
+    if(f_b_window.size() >= 5){
+        variables.v_dot_l_now = vec.R_b_l*(variables.f_b - g_b_mean) - (2*omega_ie_l + omega_el_l)*vec.v_l;
+    }
+    else{
+        variables.v_dot_l_now = (vec.R_b_l * variables.f_b - (2*omega_ie_l + omega_el_l)*vec.v_l + vec.R_b_l * g_l);
+    }
 
-    // When vehicle is static, jitter of IMU measurements is small.
+    /* When vehicle is static, jitter of IMU measurements is small. */
     if((variables.f_b-f_b_mean).norm() < 0.1){
         variables.v_dot_l_now = (1/amplify)*variables.v_dot_l_now;
         flag_static = true;
     }
-    else {
-        flag_static = false;
-    }
+    else flag_static = false;
 
-    // Sliding window of f_b
+    /* Sliding window of f_b is constraint @ length 100 */
     if(f_b_window.size() < 100){
         f_b_window.push_back(variables.f_b);
     }
@@ -166,57 +178,96 @@ void Ins_mechanization::r_dot_l_update(mechanization& variables, state& vec){
     D_inverse = D_inverse_update(vec); 
     variables.r_dot_l_past = variables.r_dot_l_now;
     variables.r_dot_l_now = D_inverse * vec.v_l;
+    // std::cout << "r_dot_l_past: " << std::endl << variables.r_dot_l_past << std::endl;
     Eigen::Vector3d r_dot_l_enu = coordinate_mat_transformation::lla2enu(variables.r_dot_l_now, nckuee);
 }
 
 void Ins_mechanization::GNSSfixcallback(const sensor_msgs::NavSatFix& msg){
-    if(ins_config_.mode == 0 || fix_flag == false){
+    if(ins_config_.fix_type == 3){
+        /* Update once  */
+        if(fix_flag == false){
+            Eigen::Vector3d pos(msg.latitude, msg.longitude, msg.altitude);
+            state_vector_.r_l = pos;
+        }
+    }
+    else if(ins_config_.mode == 0 || fix_flag == false){
         Eigen::Vector3d pos(msg.latitude, msg.longitude, msg.altitude);
         state_vector_.r_l = pos;
     }
     else if(ins_config_.mode == 1){
-        //Don't update
+        /* Don't update  */
     }
-    if(ins_config_.mode == 0 && att_flag == true) send_tf(state_vector_.r_l, state_vector_.att_l, "ublox");
+    if(ins_config_.mode == 0 && att_flag == true && ins_config_.fix_type != 3) send_tf(state_vector_.r_l, state_vector_.att_l, "ublox");
     fix_flag = true;
     ins_config_.transform2baselink = false;
 }
 
-void Ins_mechanization::GNSSvelcallback(const geometry_msgs::TwistWithCovarianceStamped& msg){ // /ublox_f9k/fix_velocity:ENU
-    if(ins_config_.odometer == 0 && (ins_config_.mode == 0 || vel_flag == false)){
+// /ublox_f9k/fix_velocity:ENU
+void Ins_mechanization::GNSSvelcallback(const geometry_msgs::TwistWithCovarianceStamped& msg){
+    if(ins_config_.fix_type == 3){
+        //*Update once  */
+        if(ins_config_.odometer == 0 && vel_flag == false){
+            Eigen::Vector3d vel_l(msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z);
+            state_vector_.v_l = vel_l;
+            vel_flag = true;
+            // std::cout << "\033[33m" << "vel_l" << std::endl << vel_l << "\033[0m" << std::endl;
+        }
+    }
+    else if(ins_config_.odometer == 0 && (ins_config_.mode == 0 || vel_flag == false)){
         Eigen::Vector3d vel_l(msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z);
         state_vector_.v_l = vel_l;
         vel_flag = true;
     }
     else if(ins_config_.mode == 1){
-        //Don't update
+        /* Don't update */
     }
 }
 
-void Ins_mechanization::GNSSspeedcallback(const ublox_msgs::NavPVT& msg){ // /ublox_f9k/navpvt
+// /ublox_f9k/navpvt
+void Ins_mechanization::GNSSspeedcallback(const ublox_msgs::NavPVT& msg){ 
     if(ins_config_.mode == 0 || vel_flag == false){
         state_vector_.v_forward = (double)msg.gSpeed/1000;
         // std::cout << "\033[33m" << "v_forward" << std::endl << state_vector_.v_forward << "\033[0m" << std::endl;
         vel_flag = true;
     }
     else if(ins_config_.mode == 1){
-        //Don't update
         state_vector_.v_forward = (double)msg.gSpeed/1000;
-        // std::cout << "\033[33m" << "v_forward" << std::endl << state_vector_.v_forward << "\033[0m" << std::endl;
         vel_flag = true;
     }
 }
             
 void Ins_mechanization::GNSSattcallback(const ublox_msgs::NavATT& msg){ 
-    if(ins_config_.mode == 0 || att_flag == false){
+    if(ins_config_.fix_type == 3){
+        /* Update once to initilized*/
+        if(att_flag == false){
+            Eigen::Vector3d att(msg.roll/100000, msg.pitch/100000, msg.heading/100000);
+            /* NED -> ENU */
+            att(2) = 360 - att(2);
+            double tmp = att(1);
+            att(1) = att(0);
+            att(0) = tmp;
+
+            /* 0 ~ 360 -> -180 ~ 180 */
+            for (int i = 0; i < 3; i++){
+                if (att(i) > 180 && att(i) < 360){
+                    att(i) = att(i) - 360;
+                }
+            }
+            att = att*DEG_TO_RAD; 
+            // std::cout << "att" << std::endl << att << std::endl;
+            state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
+            state_vector_.att_l = att;
+        }
+    }
+    else if(ins_config_.mode == 0 || att_flag == false){
         Eigen::Vector3d att(msg.roll/100000, msg.pitch/100000, msg.heading/100000);
-        // NED -> ENU
+        /* NED -> ENU */
         att(2) = 360 - att(2);
         double tmp = att(1);
         att(1) = att(0);
         att(0) = tmp;
 
-        // 0 ~ 360 -> -180 ~ 180
+        /* 0 ~ 360 -> -180 ~ 180 */
         for (int i = 0; i < 3; i++){
             if (att(i) > 180 && att(i) < 360){
                 att(i) = att(i) - 360;
@@ -227,10 +278,8 @@ void Ins_mechanization::GNSSattcallback(const ublox_msgs::NavATT& msg){
         state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att);
         state_vector_.att_l = att;
     }
-    else if(ins_config_.mode == 1){
-        //Don't update
-    }
-    if(ins_config_.mode == 0 && fix_flag == true) send_tf(state_vector_.r_l, state_vector_.att_l, "ublox");
+    else if(ins_config_.mode == 1){/*Don't update */}
+    if(ins_config_.mode == 0 && fix_flag == true && ins_config_.fix_type != 3) send_tf(state_vector_.r_l, state_vector_.att_l, "ublox");
     att_flag = true;
 }
 
@@ -241,12 +290,12 @@ void Ins_mechanization::Novatelfixcallback(const novatel_gps_msgs::Inspva& msg){
             Eigen::Vector3d pos(msg.latitude, msg.longitude, msg.height);
             Eigen::Vector3d vel_l(msg.east_velocity, msg.north_velocity, msg.up_velocity);
             Eigen::Vector3d att(msg.roll, msg.pitch, msg.azimuth);
-            // NED -> ENU
+            /* NED -> ENU */
             att(2) = 360 - att(2);
             double tmp = att(1);
             att(1) = att(0);
             att(0) = tmp;
-            // 0 ~ 360 -> -180 ~ 180
+            /* 0 ~ 360 -> -180 ~ 180 */
             for (int i = 0; i < 3; i++){
                 if (att(i) > 180 && att(i) < 360){
                     att(i) = att(i) - 360;
@@ -254,7 +303,7 @@ void Ins_mechanization::Novatelfixcallback(const novatel_gps_msgs::Inspva& msg){
             }
             att = att*DEG_TO_RAD; 
 
-            // If odometer is on, velocity isn't updated with Novatel
+            /* If odometer is on, velocity isn't updated with Novatel */
             if(ins_config_.odometer == 0){
                 state_vector_.v_l = vel_l;
                 vel_flag = true;
@@ -270,9 +319,7 @@ void Ins_mechanization::Novatelfixcallback(const novatel_gps_msgs::Inspva& msg){
         }
         else ins_config_.novatel_count++;
     }
-    else if(ins_config_.mode == 1){
-        //Don't update
-    }
+    else if(ins_config_.mode == 1){/* Don't update */}
 }
 void Ins_mechanization::uwbfixcallback(const uwb_ins_eskf_msgs::uwbFIX& msg){
     static int control_rate = 3;
@@ -282,7 +329,7 @@ void Ins_mechanization::uwbfixcallback(const uwb_ins_eskf_msgs::uwbFIX& msg){
             Eigen::Vector3d vel_l(msg.velocity_e, msg.velocity_n, msg.velocity_u);
             Eigen::Vector3d att(msg.att_e, msg.att_n, msg.att_u);
 
-            // 0 ~ 360 -> -180 ~ 180
+            /* 0 ~ 360 -> -180 ~ 180 */
             for (int i = 0; i < 3; i++){
                 if (att(i) > 180 && att(i) < 360){
                     att(i) = att(i) - 360;
@@ -290,7 +337,7 @@ void Ins_mechanization::uwbfixcallback(const uwb_ins_eskf_msgs::uwbFIX& msg){
             }
             att = att*DEG_TO_RAD; 
 
-            // If odometer is on, velocity isn't updated with UWB
+            /* If odometer is on, velocity isn't updated with UWB */
             if(ins_config_.odometer == 0){
                 state_vector_.v_l = vel_l;
                 vel_flag = true;
@@ -302,7 +349,7 @@ void Ins_mechanization::uwbfixcallback(const uwb_ins_eskf_msgs::uwbFIX& msg){
             ins_config_.transform2baselink = false;
         }
         else if(ins_config_.mode == 1){
-            //Don't update
+            /* Don't update */
         }
     }
     if(control_rate-- == 3) control_rate = 3;
@@ -315,7 +362,7 @@ void Ins_mechanization::fusionfixcallback(const uwb_ins_eskf_msgs::fusionFIX& ms
     Eigen::Vector3d vel_l(msg.velocity_e, msg.velocity_n, msg.velocity_u);
     Eigen::Vector3d att(msg.att_e, msg.att_n, msg.att_u);
 
-    // 0 ~ 360 -> -180 ~ 180
+    /* 0 ~ 360 -> -180 ~ 180 */
     for (int i = 0; i < 3; i++){
         if (att(i) > 180 && att(i) < 360){
             att(i) = att(i) - 360;
@@ -331,12 +378,12 @@ void Ins_mechanization::fusionfixcallback(const uwb_ins_eskf_msgs::fusionFIX& ms
 }
 
 void Ins_mechanization::Imucallback(const sensor_msgs::Imu& msg){
-    // if body frame is enu
     double current_time_tag = msg.header.stamp.toSec();
     Eigen::Vector3d acc_raw(msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z);
     Eigen::Vector3d gyro_raw(msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z);
     Imu_data_calibration(acc_raw, gyro_raw);
-    // /imu_meas topic issue 250 hz
+
+    /* /imu_meas topic is 250 hz or 100 hz */
     static int count = 1;
     if ((current_time_tag - mech_variables_.compute_time_tag) > 0.005 && count >= 1){
         count = 1;
@@ -352,7 +399,9 @@ void Ins_mechanization::Odometercallback(const geometry_msgs::TwistStamped& msg)
         vel_flag = true;
     }
     else if(ins_config_.mode == 1){
-        //Don't update
+        state_vector_.v_forward = msg.twist.linear.x;
+        vel_flag = true;
+        /* Don't update */
     }
 }
 
@@ -377,7 +426,6 @@ void Ins_mechanization::transform2baselink(){
 }
 
 void Ins_mechanization::Imu_data_calibration(Eigen::Vector3d acc_raw, Eigen::Vector3d gyro_raw){
-    // save last raw data
     Eigen::Vector3d acc_calibrated;
     Eigen::Matrix3d acc_scale;
     acc_scale << imu_correction_.acc_scale(0),                          0,                           0,
@@ -385,25 +433,24 @@ void Ins_mechanization::Imu_data_calibration(Eigen::Vector3d acc_raw, Eigen::Vec
                                            0,                          0, imu_correction_.acc_scale(2);   
     acc_calibrated = (Eigen::MatrixXd::Identity(3,3) + acc_scale).inverse() * (acc_raw - imu_correction_.acc_bias);
     // acc_calibrated = (acc_raw - imu_correction_.acc_bias);
+
     Eigen::Vector3d gyro_calibrated;
     Eigen::Matrix3d gyro_scale;
     gyro_calibrated = (gyro_raw - imu_correction_.gyro_bias);
 
     if(ins_config_.b_frame == 0){
-        // if body frame is enu
+        /* If body frame is ENU */
         mech_variables_.f_b = acc_calibrated;
         mech_variables_.w_ib_b = gyro_calibrated;
-        // std::cout << "b-frame: ENU" << std::endl;
     }
     else if(ins_config_.b_frame == 1){
-        // if body frame is nwu
+        /* If body frame is NWU */
         mech_variables_.f_b(0) = -acc_calibrated(1);
         mech_variables_.f_b(1) = acc_calibrated(0);
         mech_variables_.f_b(2) = acc_calibrated(2);
         mech_variables_.w_ib_b(0) = -gyro_calibrated(1);
         mech_variables_.w_ib_b(1) = gyro_calibrated(0);
         mech_variables_.w_ib_b(2) = gyro_calibrated(2);
-        // std::cout << "b-frame: NWU" << std::endl;
     }
     
 }
@@ -429,18 +476,16 @@ void Ins_mechanization::Initialize_state(){
 }
 
 void Ins_mechanization::Attitude_update(){
-    // inference the current attitude
+    /* inference the current attitude */
     Q_dot_update(mech_variables_, state_vector_);
     // std::cout << "att_l" << std::endl << state_vector_.att_l << std::endl;
     // std::cout << "q" << std::endl << coordinate_mat_transformation::att_Q_transform(state_vector_.att_l) << std::endl;
     // std::cout << "q_dot" << std::endl << mech_variables_.Q_dot_past * SAMPLING_TIME << std::endl;
     Eigen::VectorXd Q_now = coordinate_mat_transformation::att_Q_transform(state_vector_.att_l) + mech_variables_.Q_dot_past * SAMPLING_TIME;
     // std::cout << "Q_now" << std::endl << Q_now << std::endl;
-
     // std::cout << "Q_dot_past" << std::endl << mech_variables_.Q_dot_past * SAMPLING_TIME << std::endl;
-    // std::cout << "Q_now" << std::endl << Q_now << std::endl;
 
-    // update current attitude and rotation matrix
+    /* update current attitude and rotation matrix */
     Eigen::VectorXd att_now = coordinate_mat_transformation::Q_att_transform(Q_now);
     state_vector_.att_l = att_now;
     state_vector_.R_b_l = coordinate_mat_transformation::Rotation_matrix(att_now);
@@ -448,22 +493,24 @@ void Ins_mechanization::Attitude_update(){
 }
 
 void Ins_mechanization::Velocity_update(){
-    // inference the current velocity
+    /* inference the current velocity */
     v_dot_l_update(mech_variables_, state_vector_);
     Eigen::VectorXd vel_now = state_vector_.v_l + 0.5 * (mech_variables_.v_dot_l_now + mech_variables_.v_dot_l_past) * SAMPLING_TIME;
 
-    // update current velocity
+    /* update current velocity */
     state_vector_.v_l = vel_now;
     // std::cout << "vel_now" << std::endl << vel_now << std::endl;
 }
 
 void Ins_mechanization::Position_update(){
-    // inference the current position
-    Eigen::VectorXd r_now;
+    /* inference the current position*/
+    Eigen::Vector3d r_now;
     r_dot_l_update(mech_variables_, state_vector_);
-    r_now = state_vector_.r_l + 0.5 * ((mech_variables_.r_dot_l_now + mech_variables_.r_dot_l_past)*RAD_TO_DEG) * SAMPLING_TIME;
+    r_now(0) = state_vector_.r_l(0) + 0.5 * ((mech_variables_.r_dot_l_now(0) + mech_variables_.r_dot_l_past(0))*RAD_TO_DEG) * SAMPLING_TIME; // latitude
+    r_now(1) = state_vector_.r_l(1) + 0.5 * ((mech_variables_.r_dot_l_now(1) + mech_variables_.r_dot_l_past(1))*RAD_TO_DEG) * SAMPLING_TIME; // longitude
+    r_now(2) = state_vector_.r_l(2) + 0.5 * (mech_variables_.r_dot_l_now(2) + mech_variables_.r_dot_l_past(02)) * SAMPLING_TIME; // height
 
-    // update current position
+    /* update current position */
     state_vector_.r_l = r_now;
     Eigen::Vector3d pos_enu = coordinate_mat_transformation::lla2enu(r_now, nckuee);
     std::cout << std::fixed << std::setprecision(10);
@@ -539,8 +586,10 @@ void Ins_mechanization::compute(){
     }
     else{
         Attitude_update();
-        // If Odometer is on
-        // Update velocity with GNSS speed / Odometer measuenment
+        /* 
+        If Odometer is on
+        Update velocity with GNSS speed / Odometer measuenment
+        */
         if(ins_config_.odometer != 0){
             Eigen::Vector3d vel_b(0, state_vector_.v_forward, 0); //enu
             state_vector_.v_l = state_vector_.R_b_l*vel_b;
@@ -548,7 +597,7 @@ void Ins_mechanization::compute(){
             // std::cout << "\033[33m" << "v_forward" << std::endl << state_vector_.v_forward << "\033[0m" << std::endl;
         }
         Velocity_update();
-        // Check if position is tranform to baselink
+        /* Check if position is tranform to baselink */
         if(!ins_config_.transform2baselink){
             transform2baselink();
             std::cout << "\033[33m" << "Transform to baselink !" << "\033[0m" << std::endl;

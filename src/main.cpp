@@ -18,12 +18,12 @@ int main(int argc, char **argv) {
     nh.param("A0_y", ins_config.uwb_b(1), 0.05);
     nh.param("A0_z", ins_config.uwb_b(2), 0.43);
 
-    // Publishers of ins solution
+    /* Publishers of ins solution */
     ros::Publisher pub_ins_fix = n.advertise<uwb_ins_eskf_msgs::InsFIX>("/ins/fix", 1);
 
     INS::Ins_mechanization ublox_ins(pub_ins_fix, ins_config);
 
-    // Subscribers of GNSS data
+    /* Subscribers of GNSS data */
     ros::Subscriber sub_ublox_att;
     ros::Subscriber sub_ublox_pos;
     ros::Subscriber sub_ublox_vel;
@@ -42,6 +42,11 @@ int main(int argc, char **argv) {
     }
     else if(ins_config.fix_type == 2){
         sub_novatel = n.subscribe("/novatel/inspva", 1, &INS::Ins_mechanization::Novatelfixcallback, &ublox_ins);
+    }
+    else if(ins_config.fix_type == 3){
+        sub_ublox_att = n.subscribe("/ublox_f9k/navatt", 1, &INS::Ins_mechanization::GNSSattcallback, &ublox_ins);
+        sub_ublox_pos = n.subscribe("/ublox_f9k/fix", 1, &INS::Ins_mechanization::GNSSfixcallback, &ublox_ins);
+        sub_ublox_vel = n.subscribe("/ublox_f9k/fix_velocity", 1, &INS::Ins_mechanization::GNSSvelcallback, &ublox_ins);
     }
 
     if(ins_config.odometer == 0){
